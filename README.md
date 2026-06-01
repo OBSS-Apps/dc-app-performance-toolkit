@@ -62,24 +62,72 @@ for non-app runs.
      - `5`–`10` — realistic mixed run alongside the stock Confluence actions.
      - `0` — disable; the seed script will self-skip on prepare.
 
-4. **Run the toolkit normally.** No extra commands are required.
-   ```bash
-   bzt app/confluence.yml
+4. **Pick the Run and toggle the seed line.** Marketplace DC compliance
+   evaluates the app across **five runs**; the Baselines data seed script
+   (`prepare_baseline_data.py`) must only execute for the last three.
+   Toggle one line in `app/confluence.yml` -> `services` -> `prepare`
+   and the `standalone_extension` weight per the table below:
+
+   | Run | Confluence instance state | Seed line | `standalone_extension` |
+   |---|---|---|---|
+   | **Run 1** | Baselines app **not installed** | commented out | `0` |
+   | **Run 2** | App installed, **no app data** | commented out | `0` |
+   | **Run 3** | App installed, **with app data** | enabled | e.g. `5`–`10` |
+   | **Run 4** | Same as Run 3 (repeat) | enabled | same as Run 3 |
+   | **Run 5** | Same as Run 3 (repeat) | enabled | same as Run 3 |
+
+   - For **Run 1**, the script would otherwise call `createBaseline`
+     against a plugin endpoint that does not exist (app not installed) and
+     abort the prepare phase. Commenting it out is mandatory.
+   - For **Run 2**, the run must measure the cost of merely *installing*
+     the app; pre-creating baselines would inject data and invalidate the
+     comparison. Commenting it out is mandatory.
+   - For **Runs 3, 4 and 5**, leave the line uncommented so the script
+     seeds two `version-based` baselines per space and writes
+     `baselines.csv`. Use the same configuration across Runs 3–5 so the
+     three samples are comparable.
+
+   ```yaml
+   # app/confluence.yml — services -> prepare
+       prepare:
+         - python util/pre_run/environment_checker.py
+         - python util/pre_run/environment_compliance_check.py confluence
+         - python util/data_preparation/confluence_prepare_data.py
+   #     - python util/confluence/prepare_baseline_data.py   # Runs 1 & 2: commented out · Runs 3-5: uncommented
    ```
+
+5. **Run the toolkit** with the dockerized runner that ships with the
+   toolkit (preferred over a plain `bzt` invocation — pins dependencies,
+   JMeter version and the agent image):
+
+   ```bash
+   export ENVIRONMENT_NAME=your_environment_name
+
+   docker run --pull=always --env-file ./app/util/k8s/aws_envs \
+     -e REGION=us-east-2 \
+     -e ENVIRONMENT_NAME=$ENVIRONMENT_NAME \
+     -v "/$PWD:/data-center-terraform/dc-app-performance-toolkit" \
+     -v "/$PWD/app/util/k8s/bzt_on_pod.sh:/data-center-terraform/bzt_on_pod.sh" \
+     -it atlassianlabs/terraform:2.9.21 bash bzt_on_pod.sh confluence.yml
+   ```
+
    During `prepare`, the toolkit:
    1. runs `environment_checker.py` / `environment_compliance_check.py`,
-   2. runs `confluence_prepare_data.py` (standard datasets),
-   3. runs `prepare_baseline_data.py` — if `standalone_extension > 0`, it
-      seeds two baselines per space and writes `baselines.csv`; otherwise it
-      prints a skip line and exits cleanly.
+   2. runs `confluence_prepare_data.py` (standard datasets — always),
+   3. runs `prepare_baseline_data.py` **only when the line above is
+      uncommented** (Runs 3–5). When it runs and `standalone_extension > 0`,
+      it seeds two baselines per space and writes `baselines.csv`;
+      otherwise it self-skips.
 
-   The JMeter run then exercises the `bsl_*` transactions in proportion to
-   the weights above.
+   The JMeter run then exercises the `bsl_*` transactions (Runs 3–5) or
+   only the core Confluence transactions (Runs 1–2).
 
-5. **Inspect results** under `app/results/confluence/<timestamp>/`:
-   - `bzt.log` — confirms the seed step ran and reports per-space outcomes.
+6. **Inspect results** under `app/results/confluence/<timestamp>/`:
+   - `bzt.log` — confirms the seed step ran (or was skipped) and reports
+     per-space outcomes.
    - `kpi.jtl` and the aggregate report — look for the `bsl_*` transaction
-     labels alongside the core Confluence transactions.
+     labels alongside the core Confluence transactions (present only for
+     Runs 3–5).
 
 ## Per-machine settings that are intentionally **not** committed here
 
