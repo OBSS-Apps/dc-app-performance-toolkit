@@ -49,6 +49,7 @@ services:
       - python util/pre_run/environment_checker.py
       - python util/pre_run/environment_compliance_check.py confluence
       - python util/data_preparation/confluence_prepare_data.py
+      - python util/confluence/prepare_baseline_data.py # Baselines for Confluence app data seeding (self-skips when standalone_extension=0)
     shutdown:
       - python util/post_run/jmeter_post_check.py
       - python util/jtl_convertor/jtls-to-csv.py kpi.jtl selenium.jtl
