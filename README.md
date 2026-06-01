@@ -1,3 +1,96 @@
+# Baselines for Confluence — App-Specific Performance Tests
+
+This branch adapts the toolkit to load-test the **Baselines for Confluence**
+(OBSS) Data Center app through the JMeter `standalone_extension` hook.
+The rest of the toolkit is unchanged; everything described below is additive
+and self-skips when the app weight is `0`, so the branch is safe to use even
+for non-app runs.
+
+## What this branch changes
+
+- **`app/jmeter/confluence.jmx`** — adds a `baselines` CSV DataSet and, inside
+  `standalone_extension`, six weighted app-specific transactions:
+  `bsl_view_baseline`, `bsl_browse`, `bsl_compare_baselines`,
+  `bsl_create_delete`, `bsl_export_pdf`, `bsl_export_csv`. Each transaction is
+  individually labelled in the report. Weighting is done with nested
+  `ThroughputController`s (percent-executions): 30 / 30 / 15 / 10 / 10 / 5.
+- **`app/util/confluence/prepare_baseline_data.py`** — a seed script that
+  follows the same conventions as `confluence_prepare_data.py`. It reads
+  `CONFLUENCE_SETTINGS`, walks `datasets/confluence/pages.csv`, resolves the
+  numeric space id for each space, and creates two `version-based` baselines
+  (`perf-seed-1`, `perf-seed-2`) per space via
+  `POST /rest/baseline/1.0/baselineService/createBaseline`. It then writes
+  `datasets/confluence/baselines.csv` with the columns JMeter expects:
+  `bsl_space_key,bsl_space_id,bsl_page_id,bsl_baseline1,bsl_baseline2`.
+  The script self-skips when `standalone_extension: 0`.
+- **`app/confluence.yml`** — one new line in `services.prepare`, right after
+  `confluence_prepare_data.py`, so the seed runs automatically on every
+  `bzt` invocation:
+  ```yaml
+  - python util/confluence/prepare_baseline_data.py
+  ```
+- **`app/util/confluence/PERF_BASELINES_README.md`** — detailed reference
+  (Turkish) covering action design, troubleshooting and limits.
+
+## How to run the tests
+
+1. **Clone the fork and switch to this branch.**
+   ```bash
+   git clone https://github.com/OBSS-Apps/dc-app-performance-toolkit.git
+   cd dc-app-performance-toolkit
+   git checkout baseline-for-confluence
+   ```
+
+2. **Make sure the prerequisites are met on the target instance:**
+   - The **Baselines for Confluence** app is installed and **licensed** (the
+     license must not be expired — every Baselines REST endpoint enforces it).
+   - The instance is **not** in read-only mode (create / delete / compare
+     would otherwise return 403).
+   - Baselines admin permission groups are left unrestricted (default), or
+     the toolkit's `performance_*` users are members of the configured
+     view / edit / delete / export groups.
+
+3. **Configure `app/confluence.yml`** for your environment. The keys you
+   typically touch are all in `settings.env`:
+   - `application_hostname`, `application_protocol`, `application_port`,
+     `application_postfix` — point at your Confluence DC.
+   - `admin_login` / `admin_password` — used by both the standard prepare
+     and by the Baselines seed script.
+   - `standalone_extension` — share of total load that the six Baselines
+     transactions take.
+     - `100` — isolate just the new actions (smoke test the branch).
+     - `5`–`10` — realistic mixed run alongside the stock Confluence actions.
+     - `0` — disable; the seed script will self-skip on prepare.
+
+4. **Run the toolkit normally.** No extra commands are required.
+   ```bash
+   bzt app/confluence.yml
+   ```
+   During `prepare`, the toolkit:
+   1. runs `environment_checker.py` / `environment_compliance_check.py`,
+   2. runs `confluence_prepare_data.py` (standard datasets),
+   3. runs `prepare_baseline_data.py` — if `standalone_extension > 0`, it
+      seeds two baselines per space and writes `baselines.csv`; otherwise it
+      prints a skip line and exits cleanly.
+
+   The JMeter run then exercises the `bsl_*` transactions in proportion to
+   the weights above.
+
+5. **Inspect results** under `app/results/confluence/<timestamp>/`:
+   - `bzt.log` — confirms the seed step ran and reports per-space outcomes.
+   - `kpi.jtl` and the aggregate report — look for the `bsl_*` transaction
+     labels alongside the core Confluence transactions.
+
+## Per-machine settings that are intentionally **not** committed here
+
+So this branch stays reusable across machines, the following are left to
+your local `confluence.yml`: `application_hostname`, `admin_login`,
+`admin_password`, the action-weight tuning block, the `standalone_extension`
+value, and anything under `app/util/k8s/` and `app/reports_generation/`.
+Set them locally before running; do not commit them to this branch.
+
+---
+
 # Data Center App Performance Toolkit 
 The Data Center App Performance Toolkit extends [Taurus](https://gettaurus.org/) which is an open source performance framework that executes JMeter and Selenium.
 
